@@ -3,13 +3,13 @@
 # Examples:
 #
 #   Build for desktop
-#   > ./build.sh build release arm64-apple-macosx
+#   > ./build.sh build release arm64-apple-macos13.0
 #
 #   Build for iphone
-#   > ./build.sh build release arm64-apple-ios14.0
+#   > ./build.sh build release arm64-apple-ios12.0
 #
 #   Build for iphone
-#   > ./build.sh build release x86_64-apple-ios14.0-simulator
+#   > ./build.sh build release x86_64-apple-ios12.0-simulator
 
 # Package layout
 #
@@ -36,7 +36,7 @@ BUILDWHAT="$1"
 # Build type (release, debug)
 BUILDTYPE="$2"
 
-# Build target, i.e. arm64-apple-macosx, aarch64-apple-ios14.0, x86_64-apple-ios14.0-simulator, ...
+# Build target, i.e. arm64-apple-macos13.0, aarch64-apple-ios12.0, x86_64-apple-ios12.0-simulator, ...
 BUILDTARGET="$3"
 
 # Build Output
@@ -56,6 +56,12 @@ exitWithError()
     echo "$@"
     echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
     exit -1
+}
+
+exitOnError()
+{
+    if [[ 0 -eq $? ]]; then return 0; fi
+    exitWithError $@
 }
 
 gitCheckout()
@@ -79,6 +85,23 @@ gitCheckout()
     fi
 }
 
+extractVersion()
+{
+    local tuple="$1"
+    local key="$2"
+    local version=""
+
+    IFS='-' read -ra components <<< "$tuple"
+    for component in "${components[@]}"; do
+        if [[ $component == ${key}* ]]; then
+        version="${component#$key}"
+        break
+        fi
+    done
+
+    echo "$version"
+}
+
 
 #--------------------------------------------------------------------
 # Options
@@ -97,7 +120,7 @@ if [ -z "${BUILDTYPE}" ]; then
 fi
 
 if [ -z "${BUILDTARGET}" ]; then
-    BUILDTARGET="arm64-apple-macosx"
+    BUILDTARGET="arm64-apple-macos"
 fi
 
 # ios-arm64_x86_64-simulator
@@ -153,6 +176,9 @@ else
     fi
 fi
 
+# Add build type to output folder
+BUILDOUT="${BUILDOUT}/${BUILDTYPE}"
+
 # Make custom output directory if it doesn't exist
 if [ ! -z "$BUILDOUT" ] && [ ! -d "$BUILDOUT" ]; then
     mkdir -p "$BUILDOUT"
@@ -168,11 +194,16 @@ LIBROOT="${BUILDOUT}/${BUILDTARGET}/lib3"
 LIBINST="${BUILDOUT}/${BUILDTARGET}/install"
 
 PKGNAME="${LIBNAME}.a.xcframework"
-PKGROOT="${BUILDOUT}/pkg/${BUILDTYPE}/${PKGNAME}"
-PKGFILE="${BUILDOUT}/pkg/${BUILDTYPE}/${PKGNAME}.zip"
+PKGROOT="${BUILDOUT}/pkg/${PKGNAME}"
+PKGFILE="${BUILDOUT}/pkg/${PKGNAME}.zip"
 
 # iOS toolchain
 if [[ $BUILDTARGET == *"ios"* ]]; then
+
+    TGT_OSVER=$(extractVersion "$BUILDTARGET" "ios")
+    if [ -z "$TGT_OSVER" ]; then
+        TGT_OSVER="14.0"
+    fi
 
     gitCheckout "https://github.com/leetal/ios-cmake.git" "4.3.0" "${LIBROOT}/ios-cmake"
 
@@ -205,34 +236,57 @@ if [[ $BUILDTARGET == *"ios"* ]]; then
                -DCMAKE_TOOLCHAIN_FILE=${LIBROOT}/ios-cmake/ios.toolchain.cmake \
                -DPLATFORM=${TGT_PLATFORM} \
                -DENABLE_BITCODE=OFF \
-               -DCMAKE_CXX_STANDARD=17 \
-               -DDEPLOYMENT_TARGET=\"14.0\" \
+               -DDEPLOYMENT_TARGET=$TGT_OSVER \
                "
-                    # -DCMAKE_OSX_SYSROOT_INT=14 \
+else
+    TGT_OSVER=$(extractVersion "$BUILDTARGET" "macos")
+    if [ -z "$TGT_OSVER" ]; then
+        TGT_OSVER="13.2"
+    fi
 
+    TOOLCHAIN="${TOOLCHAIN} \
+               -DCMAKE_OSX_DEPLOYMENT_TARGET=$TGT_OSVER \
+               -DCMAKE_OSX_ARCHITECTURES=$TGT_ARCH
+               "
 fi
+
+TOOLCHAIN="${TOOLCHAIN} \
+            -DCMAKE_CXX_STANDARD=17 \
+            "
 
 
 #--------------------------------------------------------------------
-echo ""
-Log "#--------------------------------------------------------------------"
-Log "LIBNAME        : ${LIBNAME}"
-Log "BUILDWHAT      : ${BUILDWHAT}"
-Log "BUILDTYPE      : ${BUILDTYPE}"
-Log "BUILDTARGET    : ${BUILDTARGET}"
-Log "ROOTDIR        : ${ROOTDIR}"
-Log "BUILDOUT       : ${BUILDOUT}"
-Log "TARGET         : ${TARGET}"
-Log "PLATFORM       : ${TGT_PLATFORM}"
-Log "PKGNAME        : ${PKGNAME}"
-Log "PKGROOT        : ${PKGROOT}"
-Log "LIBROOT        : ${LIBROOT}"
-Log "#--------------------------------------------------------------------"
-echo ""
+showParams()
+{
+    echo ""
+    Log "#--------------------------------------------------------------------"
+    Log "LIBNAME        : ${LIBNAME}"
+    Log "BUILDWHAT      : ${BUILDWHAT}"
+    Log "BUILDTYPE      : ${BUILDTYPE}"
+    Log "BUILDTARGET    : ${BUILDTARGET}"
+    Log "ROOTDIR        : ${ROOTDIR}"
+    Log "BUILDOUT       : ${BUILDOUT}"
+    Log "TARGET         : ${TARGET}"
+    Log "OSVER          : ${TGT_OSVER}"
+    Log "ARCH           : ${TGT_ARCH}"
+    Log "PLATFORM       : ${TGT_PLATFORM}"
+    Log "PKGNAME        : ${PKGNAME}"
+    Log "PKGROOT        : ${PKGROOT}"
+    Log "LIBROOT        : ${LIBROOT}"
+    Log "#--------------------------------------------------------------------"
+    echo ""
+}
+showParams
 
 #-------------------------------------------------------------------
 # Rebuild lib and copy files if needed
 #-------------------------------------------------------------------
+if [[ $BUILDWHAT == *"clean"* ]]; then
+    if [ -d "${LIBROOT}" ]; then
+        rm -Rf "${LIBROOT}"
+    fi
+fi
+
 if [ ! -d "${LIBROOT}" ]; then
 
     Log "Reinitializing install..."
@@ -251,10 +305,58 @@ LIBINSTFULL="${LIBINST}/${BUILDTARGET}/${BUILDTYPE}"
 # Checkout and build library
 #-------------------------------------------------------------------
 if    [ ! -z "${REBUILDLIBS}" ] \
+   || [[ $BUILDWHAT == *"rebuild"* ]] \
    || [ ! -f "${LIBINSTFULL}/lib/libCesium3DTiles.a" ]; then
+
+    # Remove existing package
+    rm -Rf "${PKGROOT}/${TARGET}"
+
+    if [ ! -d "${LIBBUILD}" ]; then
+        DOPATCHING="YES"
+    fi
 
     # rm -Rf "$LIBBUILD" "${PKGROOT}/${TARGET}"
     gitCheckout "https://github.com/CesiumGS/cesium-native.git" "v0.25.1" "${LIBBUILD}"
+
+    if [ ! -z "$DOPATCHING" ]; then
+
+        echo "\n======================= PATCHING =======================\n"
+
+        ADD_CREATE2_HPP=" \n\
+            static /* +++ Added */ ViewState create2(double px, double py, double pz,   \n\
+                                    double dx, double dy, double dz,                    \n\
+                                    double ux, double uy, double uz,                    \n\
+                                    double vw, double vh,                               \n\
+                                    double hfov, double vfov,                           \n\
+                                    const CesiumGeospatial::Ellipsoid\& ellipsoid =     \n\
+                                                CesiumGeospatial::Ellipsoid::WGS84);    \n\
+            "
+        sed -i '' "s|static ViewState create(|${ADD_CREATE2_HPP}\nstatic /* +++ Patched */ ViewState create(|g" \
+            "${LIBBUILD}/Cesium3DTilesSelection/include/Cesium3DTilesSelection/ViewState.h"
+
+        ADD_CREATE2_CPP=" \n\
+            /* static +++ Added */ ViewState ViewState::create2(double px, double py, double pz,        \n\
+                                                      double dx, double dy, double dz,                  \n\
+                                                      double ux, double uy, double uz,                  \n\
+                                                      double vw, double vh,                             \n\
+                                                      double hfov, double vfov,                         \n\
+                                                      const CesiumGeospatial::Ellipsoid\& ellipsoid)    \n\
+            {                                                                                           \n\
+                return ViewState(                                                                       \n\
+                                    glm::dvec3(px, py, pz),                                             \n\
+                                    glm::dvec3(dx, dy, dz),                                             \n\
+                                    glm::dvec3(ux, uy, uz),                                             \n\
+                                    glm::dvec2(vw, vh),                                                 \n\
+                                    hfov,                                                               \n\
+                                    vfov,                                                               \n\
+                                    ellipsoid.cartesianToCartographic(glm::dvec3(px, py, pz))           \n\
+                                );                                                                      \n\
+            }                                                                                           \n\
+        "
+        sed -i '' "s|namespace Cesium3DTilesSelection {|namespace Cesium3DTilesSelection /* +++ Patched */{\n${ADD_CREATE2_CPP}|g" \
+            "${LIBBUILD}/Cesium3DTilesSelection/src/ViewState.cpp"
+
+    fi
 
     Log "Building ${LIBNAME}"
 
@@ -263,9 +365,10 @@ if    [ ! -z "${REBUILDLIBS}" ] \
     echo "\n====================== CONFIGURING =====================\n"
     cmake . -B ./build -DCMAKE_BUILD_TYPE=${BUILDTYPE} \
                     ${TOOLCHAIN} \
+                    -DCESIUM_TESTS_ENABLED=OFF \
                     -DCMAKE_XCODE_ATTRIBUTE_ONLY_ACTIVE_ARCH=NO \
                     -DCMAKE_INSTALL_PREFIX="${LIBINSTFULL}"
-
+    exitOnError "Failed to configure ${LIBNAME}"
 
     echo "\n======================= PATCHING =======================\n"
 
@@ -285,6 +388,7 @@ if    [ ! -z "${REBUILDLIBS}" ] \
                    -target cesium_static \
                    -configuration Release \
                    -sdk iphonesimulator
+        exitOnError "Failed to xbuild ${LIBNAME}"
 
         mkdir -p "${LIBINSTFULL}/include"
         cp -R "${LIBROOT}/${LIBNAME}/include/." "${LIBINSTFULL}/include/"
@@ -295,9 +399,11 @@ if    [ ! -z "${REBUILDLIBS}" ] \
     else
         echo "\n======================= BUILDING =======================\n"
         cmake --build ./build -j$NUMCPUS
+        exitOnError "Failed to build ${LIBNAME}"
 
         echo "\n====================== INSTALLING ======================\n"
         cmake --install ./build
+        exitOnError "Failed to install ${LIBNAME}"
     fi
 
     cd "${BUILDOUT}"
@@ -307,7 +413,7 @@ fi
 # Create target package
 #-------------------------------------------------------------------
 if    [ ! -z "${REBUILDLIBS}" ] \
-   || [ ! -f "${PKGROOT}/${TARGET}" ]; then
+   || [ ! -d "${PKGROOT}/${TARGET}" ]; then
 
     INCPATH="include"
     LIBPATH="${LIBNAME}.a"
@@ -321,40 +427,49 @@ if    [ ! -z "${REBUILDLIBS}" ] \
     # Copy include files
     cp -R "${LIBINSTFULL}/." "${PKGROOT}/${TARGET}/"
 
+    # Library postfix
+    PF=.a
+    if [[ "debug" == "$BUILDTYPE" ]]; then
+        PF=d.a
+    fi
+
     # Combine libs
     Log "Runnning libtool..."
     LIBSRC="\
-            ${LIBINSTFULL}/lib/libasync++.a \
-            ${LIBINSTFULL}/lib/libCesium3DTiles.a \
-            ${LIBINSTFULL}/lib/libCesium3DTilesReader.a \
-            ${LIBINSTFULL}/lib/libCesium3DTilesSelection.a \
-            ${LIBINSTFULL}/lib/libCesium3DTilesWriter.a \
-            ${LIBINSTFULL}/lib/libCesiumAsync.a \
-            ${LIBINSTFULL}/lib/libCesiumGeometry.a \
-            ${LIBINSTFULL}/lib/libCesiumGeospatial.a \
-            ${LIBINSTFULL}/lib/libCesiumGltf.a \
-            ${LIBINSTFULL}/lib/libCesiumGltfReader.a \
-            ${LIBINSTFULL}/lib/libCesiumGltfWriter.a \
-            ${LIBINSTFULL}/lib/libCesiumIonClient.a \
-            ${LIBINSTFULL}/lib/libCesiumJsonReader.a \
-            ${LIBINSTFULL}/lib/libCesiumJsonWriter.a \
-            ${LIBINSTFULL}/lib/libCesiumUtility.a \
-            ${LIBINSTFULL}/lib/libcsprng.a \
-            ${LIBINSTFULL}/lib/libdraco.a \
-            ${LIBINSTFULL}/lib/libktx_read.a \
-            ${LIBINSTFULL}/lib/libmodp_b64.a \
-            ${LIBINSTFULL}/lib/libs2geometry.a \
-            ${LIBINSTFULL}/lib/libspdlog.a \
-            ${LIBINSTFULL}/lib/libsqlite3.a \
-            ${LIBINSTFULL}/lib/libtinyxml2.a \
-            ${LIBINSTFULL}/lib/libturbojpeg.a \
-            ${LIBINSTFULL}/lib/liburiparser.a \
-            ${LIBINSTFULL}/lib/libwebpdecoder.a \
-            ${LIBINSTFULL}/lib/libz.a \
-            "
+            ${LIBINSTFULL}/lib/libasync++$PF \
+            ${LIBINSTFULL}/lib/libCesium3DTiles$PF \
+            ${LIBINSTFULL}/lib/libCesium3DTilesReader$PF \
+            ${LIBINSTFULL}/lib/libCesium3DTilesSelection$PF \
+            ${LIBINSTFULL}/lib/libCesium3DTilesWriter$PF \
+            ${LIBINSTFULL}/lib/libCesiumAsync$PF \
+            ${LIBINSTFULL}/lib/libCesiumGeometry$PF \
+            ${LIBINSTFULL}/lib/libCesiumGeospatial$PF \
+            ${LIBINSTFULL}/lib/libCesiumGltf$PF \
+            ${LIBINSTFULL}/lib/libCesiumGltfReader$PF \
+            ${LIBINSTFULL}/lib/libCesiumGltfWriter$PF \
+            ${LIBINSTFULL}/lib/libCesiumIonClient$PF \
+            ${LIBINSTFULL}/lib/libCesiumJsonReader$PF \
+            ${LIBINSTFULL}/lib/libCesiumJsonWriter$PF \
+            ${LIBINSTFULL}/lib/libCesiumUtility$PF \
+            ${LIBINSTFULL}/lib/libcsprng$PF \
+            ${LIBINSTFULL}/lib/libdraco$PF \
+            ${LIBINSTFULL}/lib/libktx_read$PF \
+            ${LIBINSTFULL}/lib/libmodp_b64$PF \
+            ${LIBINSTFULL}/lib/libs2geometry$PF \
+            ${LIBINSTFULL}/lib/libspdlog$PF \
+            ${LIBINSTFULL}/lib/libsqlite3$PF \
+            ${LIBINSTFULL}/lib/libtinyxml2$PF \
+            ${LIBINSTFULL}/lib/libturbojpeg$PF \
+            ${LIBINSTFULL}/lib/liburiparser$PF \
+            ${LIBINSTFULL}/lib/libwebpdecoder$PF \
+            ${LIBINSTFULL}/lib/libz$PF \
+           "
 
     ls -l ${LIBSRC}
     libtool -static -o "${PKGROOT}/${TARGET}/${LIBNAME}.a" ${LIBSRC}
+    exitOnError "Failed to build library ${LIBNAME}"
+
+    lipo -info "${PKGROOT}/${TARGET}/${LIBNAME}.a"
 
     INCPATH="include"
     LIBPATH="${LIBNAME}.a"
@@ -407,7 +522,6 @@ if [ -d "${PKGROOT}" ]; then
 
         # Create new package
         zip -r "${PKGFILE}" "$PKGNAME" -x "*.DS_Store"
-        # touch "${PKGFILE}"
 
         # Calculate sha256
         openssl dgst -sha256 < "${PKGFILE}" > "${PKGFILE}.sha256.txt"
@@ -416,3 +530,5 @@ if [ -d "${PKGROOT}" ]; then
 
     fi
 fi
+
+showParams
