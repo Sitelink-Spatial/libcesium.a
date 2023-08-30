@@ -11,6 +11,10 @@ iOS build for cesium-native
 
     ./build.sh build release arm64-apple-ios14.0
 
+    or
+
+    ./build-all.sh release
+
 
 ## Reference in Swift Module
 
@@ -18,8 +22,8 @@ iOS build for cesium-native
 
     .binaryTarget(
         name: "libcesium.a",
-        url: "https://github.com/Imajion/libcesium.a/releases/download/r1/libcesium.a.xcframework.zip",
-        checksum: "46280554ec64e1de4ec837ace825d50a6dee557b7ec90481861c24c6d5e2022c"
+        url: "https://github.com/Imajion/libcesium.a/releases/download/r2/libcesium.a.xcframework.zip",
+        checksum: "977cc7cb243d1ada6201cee742597298273159ed117ba714ddd42558fd264629"
     )
 
 ```

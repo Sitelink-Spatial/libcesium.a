@@ -311,52 +311,8 @@ if    [ ! -z "${REBUILDLIBS}" ] \
     # Remove existing package
     rm -Rf "${PKGROOT}/${TARGET}"
 
-    if [ ! -d "${LIBBUILD}" ]; then
-        DOPATCHING="YES"
-    fi
-
     # rm -Rf "$LIBBUILD" "${PKGROOT}/${TARGET}"
     gitCheckout "https://github.com/CesiumGS/cesium-native.git" "v0.25.1" "${LIBBUILD}"
-
-    if [ ! -z "$DOPATCHING" ]; then
-
-        echo "\n======================= PATCHING =======================\n"
-
-        ADD_CREATE2_HPP=" \n\
-            static /* +++ Added */ ViewState create2(double px, double py, double pz,   \n\
-                                    double dx, double dy, double dz,                    \n\
-                                    double ux, double uy, double uz,                    \n\
-                                    double vw, double vh,                               \n\
-                                    double hfov, double vfov,                           \n\
-                                    const CesiumGeospatial::Ellipsoid\& ellipsoid =     \n\
-                                                CesiumGeospatial::Ellipsoid::WGS84);    \n\
-            "
-        sed -i '' "s|static ViewState create(|${ADD_CREATE2_HPP}\nstatic /* +++ Patched */ ViewState create(|g" \
-            "${LIBBUILD}/Cesium3DTilesSelection/include/Cesium3DTilesSelection/ViewState.h"
-
-        ADD_CREATE2_CPP=" \n\
-            /* static +++ Added */ ViewState ViewState::create2(double px, double py, double pz,        \n\
-                                                      double dx, double dy, double dz,                  \n\
-                                                      double ux, double uy, double uz,                  \n\
-                                                      double vw, double vh,                             \n\
-                                                      double hfov, double vfov,                         \n\
-                                                      const CesiumGeospatial::Ellipsoid\& ellipsoid)    \n\
-            {                                                                                           \n\
-                return ViewState(                                                                       \n\
-                                    glm::dvec3(px, py, pz),                                             \n\
-                                    glm::dvec3(dx, dy, dz),                                             \n\
-                                    glm::dvec3(ux, uy, uz),                                             \n\
-                                    glm::dvec2(vw, vh),                                                 \n\
-                                    hfov,                                                               \n\
-                                    vfov,                                                               \n\
-                                    ellipsoid.cartesianToCartographic(glm::dvec3(px, py, pz))           \n\
-                                );                                                                      \n\
-            }                                                                                           \n\
-        "
-        sed -i '' "s|namespace Cesium3DTilesSelection {|namespace Cesium3DTilesSelection /* +++ Patched */{\n${ADD_CREATE2_CPP}|g" \
-            "${LIBBUILD}/Cesium3DTilesSelection/src/ViewState.cpp"
-
-    fi
 
     Log "Building ${LIBNAME}"
 
