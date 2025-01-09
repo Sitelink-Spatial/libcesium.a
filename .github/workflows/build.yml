@@ -20,7 +20,7 @@ jobs:
       - name: Artifacts
         uses: actions/upload-artifact@v3
         with:
-          name: Swift package
+          name: libcesium.a.zip
           path: |
             build/release/pkg/libcesium.a.xcframework.zip
             build/release/pkg/libcesium.a.xcframework.zip.sha256.txt
