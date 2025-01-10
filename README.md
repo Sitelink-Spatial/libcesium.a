@@ -22,8 +22,8 @@ iOS build for cesium-native
 
     .binaryTarget(
         name: "libcesium.a",
-        url: "https://github.com/Imajion/libcesium.a/releases/download/r4/libcesium.a.xcframework.zip",
-        checksum: "fe71d9b42768419d4d195a2b3d04a2a8e5ec9327787f6e50b0538aa591a401ee"
+        url: "https://github.com/Imajion/libcesium.a/releases/download/r5/libcesium.a.xcframework.zip",
+        checksum: "fe8b44535c2c7fb95836e6a6461cae63925b7128a92dcd104a664bad7faaf6cb"
     )
 
 ```
