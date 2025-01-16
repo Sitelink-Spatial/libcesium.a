@@ -1,5 +1,7 @@
 #!/bin/bash
 
+# https://rhonabwy.com/2023/02/10/creating-an-xcframework/
+
 # Examples:
 #
 #   Build for desktop
@@ -46,6 +48,8 @@
 LIBNAME="libcesium"
 LIBREPO="https://github.com/CesiumGS/cesium-native.git"
 LIBVER="v0.25.1"
+# LIBVER="v0.34.0"
+# LIBVER="v0.43.0"
 
 # What to do (build, test)
 BUILDWHAT="$1"
@@ -70,7 +74,7 @@ Log()
 exitWithError()
 {
     echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
-    echo "$@"
+    echo "! $@"
     echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
     exit -1
 }
@@ -154,18 +158,18 @@ else
     TGT_SUPPORTS="macos"
 fi
 
-if [[ $BUILDTARGET == *"arm64"* ]]; then
-    if [[ $BUILDTARGET == *"x86_64"* ]]; then
+if [[ $BUILDTARGET == *"arm64_x86_64"* || $BUILDTARGET == *"x86_64_arm64"* ]]; then
         TGT_ARCH="arm64_x86_64"
-    elif [[ $BUILDTARGET == *"x86"* ]]; then
-        TGT_ARCH="arm64_x86"
-    else
+    TGT_ARCHS="arm64;x86_64"
+elif [[ $BUILDTARGET == *"arm64"* ]]; then
         TGT_ARCH="arm64"
-    fi
+    TGT_ARCHS="arm64"
 elif [[ $BUILDTARGET == *"x86_64"* ]]; then
     TGT_ARCH="x86_64"
+    TGT_ARCHS="x86_64"
 elif [[ $BUILDTARGET == *"x86"* ]]; then
     TGT_ARCH="x86"
+    TGT_ARCHS="x86"
 else
     exitWithError "Invalid architecture : $BUILDTARGET"
 fi
@@ -241,14 +245,17 @@ if [[ $BUILDTARGET == *"ios"* ]]; then
         TGT_OSVER="14.0"
     fi
 
-    gitCheckout "https://github.com/leetal/ios-cmake.git" "4.3.0" "${LIBROOT}/ios-cmake"
+    gitCheckout "https://github.com/leetal/ios-cmake.git" "4.5.0" "${LIBROOT}/ios-cmake"
 
     if [[ $BUILDWHAT == *"xbuild"* ]]; then
         TOOLCHAIN="${TOOLCHAIN} -GXcode"
     fi
 
     # https://github.com/leetal/ios-cmake/blob/master/ios.toolchain.cmake
-    if [[ $BUILDTARGET == *"simulator"* ]]; then
+    if [[ $BUILDTARGET == *"combined"* ]]; then
+        TGT_PLATFORM="OS64COMBINED"
+        TOOLCHAIN="${TOOLCHAIN} -GXcode"
+    elif [[ $BUILDTARGET == *"simulator"* ]]; then
         if [ "${TGT_ARCH}" == "x86" ]; then
             TGT_PLATFORM="SIMULATOR"
         elif [[ "${TGT_ARCH}" == "x86_64" ]]; then
@@ -257,14 +264,13 @@ if [[ $BUILDTARGET == *"ios"* ]]; then
             TGT_PLATFORM="SIMULATORARM64"
         fi
     else
-        if [ "${TGT_ARCH}" == "x86" ]; then
-            TGT_PLATFORM="OS"
-        elif [[ "${TGT_ARCH}" == *"x86_64"* ]]; then
-            TGT_ARCH="arm64_x86_64"
+        if [[ "${TGT_ARCH}" == "arm64" ]]; then
+            TGT_PLATFORM="OS64"
+        elif [[ "${TGT_ARCH}" == "arm64_x86_64" ]]; then
             TGT_PLATFORM="OS64COMBINED"
             TOOLCHAIN="${TOOLCHAIN} -GXcode"
         else
-            TGT_PLATFORM="OS64"
+            TGT_PLATFORM="OS"
         fi
     fi
 
@@ -277,6 +283,12 @@ if [[ $BUILDTARGET == *"ios"* ]]; then
                -DENABLE_VISIBILITY=ON \
                -DDEPLOYMENT_TARGET=$TGT_OSVER \
                "
+    if [ ! -z "${TGT_ARCHS}" ]; then
+        TOOLCHAIN="${TOOLCHAIN} \
+                   -DARCHS=${TGT_ARCHS} \
+                   "
+    fi
+
 else
     TGT_OSVER=$(extractVersion "$BUILDTARGET" "macos")
     if [ -z "$TGT_OSVER" ]; then
@@ -285,13 +297,12 @@ else
 
     TOOLCHAIN="${TOOLCHAIN} \
                -DCMAKE_OSX_DEPLOYMENT_TARGET=$TGT_OSVER \
-               -DCMAKE_OSX_ARCHITECTURES=$TGT_ARCH
                "
 fi
 
-TOOLCHAIN="${TOOLCHAIN} \
-            -DCMAKE_CXX_STANDARD=17 \
-            "
+# TOOLCHAIN="${TOOLCHAIN} \
+#             -DCMAKE_CXX_STANDARD=17 \
+#             "
 
 
 #--------------------------------------------------------------------
@@ -314,10 +325,14 @@ showParams()
     Log "OSVER          : ${TGT_OSVER}"
     Log "SUPPORTS       : ${TGT_SUPPORTS}"
     Log "ARCH           : ${TGT_ARCH}"
+    Log "ARCHS          : ${TGT_ARCHS}"
     Log "PLATFORM       : ${TGT_PLATFORM}"
+    Log "OPTS           : ${TGT_OPTS}"
     Log "PKGNAME        : ${PKGNAME}"
     Log "PKGROOT        : ${PKGROOT}"
     Log "LIBROOT        : ${LIBROOT}"
+    Log "TOOLCHAIN      : "
+    echo "${TOOLCHAIN}" | tr -s ' ' '\n' | sed 's/^/>>>>>>                : /'
     Log "#--------------------------------------------------------------------"
     echo ""
 }
@@ -370,6 +385,35 @@ if    [ ! -z "${REBUILDLIBS}" ] \
         sed -i '' '/# Example binaries/,$s|^|# +++ |' "${LIBBUILD}/CMakeLists.txt"
     fi
 
+    if [[ $LIBVER == "v0.25.1" && $BUILDTARGET == *"simulator"* ]]; then
+
+        echo "\n======================= PATCHING =======================\n"
+
+        # Update libwebp
+        LIBDIR_WEBP="${LIBBUILD}/extern/libwebp"
+        if [ ! -d "${LIBDIR_WEBP}" ]; then
+            exitWithError "Failed to find libwebp in ${LIBDIR_WEBP}"
+        fi
+
+        # libcesium:v0.25.1 uses libwebp:v1.2.4
+
+        # Remove libwebp from build
+        sed -i '' "s|add_subdirectory(libwebp)|# add_subdirectory(libwebp)|g" "${LIBBUILD}/extern/CMakeLists.txt"
+        sed -i '' "s|install(TARGETS webpdecoder)|# install(TARGETS webpdecoder)|g" "${LIBBUILD}/CMakeLists.txt"
+
+        # Remove references to libwebp
+        SEDFILE="${LIBBUILD}/CesiumGltfReader/src/GltfReader.cpp"
+        sed -i '' "s|#include <webp/decode.h>|// #include <webp/decode.h>|g" "${SEDFILE}"
+        sed -i '' '480,726d' "${SEDFILE}"
+
+        TEMPFILE=$(mktemp)
+        INSCODE="(void)data; (void)ktx2TranscodeTargets; result.image.reset(); result.errors.emplace_back(\"Unable to decode Image\"); return result;"
+        awk -v line="480" -v text="$INSCODE" 'NR == line {print text} {print}' "$SEDFILE" > "$TEMPFILE" && mv "$TEMPFILE" "$SEDFILE"
+
+        # git -C "${LIBDIR_WEBP}" checkout "v1.5.0"
+        # exitOnError "Failed to checkout libwebp"
+
+    fi
 
     cd "${LIBBUILD}"
 
@@ -383,12 +427,15 @@ if    [ ! -z "${REBUILDLIBS}" ] \
 
     echo "\n======================= PATCHING =======================\n"
 
-    sed -i '' "s|#ifdef HAVE_REALLOCARRAY|// +++ CHANGE\n#undef HAVE_REALLOCARRAY\n# ifdef HAVE_REALLOCARRAY|g" \
-        "${LIBBUILD}/extern/uriparser/src/UriMemory.c"
+    if [[ $LIBVER == "v0.25.1" ]]; then
 
-    sed -i '' "s|libjpeg-turbo -DCMAKE_INSTALL_PREFIX=|libjpeg-turbo -DPLATFORM=$\{PLATFORM\} -DCMAKE_INSTALL_PREFIX=|g" \
-        "${LIBBUILD}/extern/CMakeLists.txt"
+        sed -i '' "s|#ifdef HAVE_REALLOCARRAY|// +++ CHANGE\n#undef HAVE_REALLOCARRAY\n# ifdef HAVE_REALLOCARRAY|g" \
+            "${LIBBUILD}/extern/uriparser/src/UriMemory.c"
 
+        sed -i '' "s|libjpeg-turbo -DCMAKE_INSTALL_PREFIX=|libjpeg-turbo -DPLATFORM=$\{PLATFORM\} -DCMAKE_INSTALL_PREFIX=|g" \
+            "${LIBBUILD}/extern/CMakeLists.txt"
+
+    fi
 
     if [[ $BUILDWHAT == *"xbuild"* ]]; then
 
@@ -472,9 +519,14 @@ if    [ ! -z "${REBUILDLIBS}" ] \
             ${LIBINSTFULL}/lib/libtinyxml2$PF \
             ${LIBINSTFULL}/lib/libturbojpeg$PF \
             ${LIBINSTFULL}/lib/liburiparser$PF \
-            ${LIBINSTFULL}/lib/libwebpdecoder$PF \
             ${LIBINSTFULL}/lib/libz$PF \
            "
+
+    if [[ $BUILDTARGET != *"simulator"* ]]; then
+        LIBSRC="${LIBSRC} \
+            ${LIBINSTFULL}/lib/libwebpdecoder$PF \
+            "
+    fi
 
     ls -l ${LIBSRC}
     libtool -static -o "${PKGROOT}/${TARGET}/${LIBNAME}.a" ${LIBSRC}
